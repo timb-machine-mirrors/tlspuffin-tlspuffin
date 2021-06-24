@@ -323,8 +323,59 @@ mod util {
     type TermPath = Vec<usize>;
     type TracePath = (StepIndex, TermPath);
 
+    fn reservoir_sample_term<'a, R: Rand, P: Fn(&Term) -> bool + Copy>(
+        term: &'a Term,
+        reservoir: &mut Option<(&'a Term, TracePath)>,
+        visited: &mut u64,
+        step_index: usize,
+        rand: &mut R,
+        filter: P,
+    ) {
+        let path = (step_index, Vec::with_capacity(10));
+
+        // push next terms onto stack
+        match term {
+            Term::Variable(_) => {
+                // reached leaf
+            }
+            Term::Application(_, subterms) => {
+                // inner node, recursively continue
+                for (path_index, subterm) in subterms.iter().enumerate() {
+                    let mut new_path = path.clone();
+                    new_path.1.push(path_index);
+
+                    reservoir_sample_term(term, reservoir, visited, step_index, rand, filter);
+                }
+            }
+        }
+
+        // sample
+        if filter(term) {
+            // consider in sampling
+            if let None = reservoir {
+                // fill initial reservoir
+                *reservoir = Some((term, path)); // todo Rust 1.53 use insert
+            } else {
+                // `1/visited` chance of overwriting
+                // replace elements with gradually decreasing probability
+                if rand.between(1, *visited) == 1 {
+                    *reservoir = Some((term, path)); // todo Rust 1.53 use insert
+                }
+            }
+
+            *visited += 1;
+        }
+    }
+
     /// https://en.wikipedia.org/wiki/Reservoir_sampling#Simple_algorithm
-    pub fn reservoir_sample<'a, R: Rand, P: Fn(&Term) -> bool + Copy>(
+    /// https://math.stackexchange.com/questions/441432/how-to-pick-a-random-node-from-a-tree
+    ///
+    /// For context: https://gitlab.inria.fr/mammann/tlspuffin/-/issues/66
+    ///
+    /// todo: improve performance by
+    ///       * refactor to recursive function
+    ///       * Do not create that many vectors
+    fn reservoir_sample<'a, R: Rand, P: Fn(&Term) -> bool + Copy>(
         trace: &'a Trace,
         rand: &mut R,
         filter: P,
@@ -337,7 +388,8 @@ mod util {
                 Action::Input(input) => {
                     let term = &input.recipe;
 
-                    let mut stack: Vec<(&Term, TracePath)> = vec![(term, (step_index, Vec::new()))];
+                    let mut stack: Vec<(&Term, TracePath)> = Vec::with_capacity(50);
+                    stack.push((term, (step_index, Vec::with_capacity(10))));
 
                     while let Some((term, path)) = stack.pop() {
                         // push next terms onto stack
@@ -349,7 +401,7 @@ mod util {
                                 // inner node, recursively continue
                                 for (path_index, subterm) in subterms.iter().enumerate() {
                                     let mut new_path = path.clone();
-                                    new_path.1.push(path_index); // invert because of .iter().rev()
+                                    new_path.1.push(path_index);
                                     stack.push((subterm, new_path));
                                 }
                             }
@@ -378,8 +430,6 @@ mod util {
                 }
             }
         }
-
-        println!("sdf");
 
         reservoir
     }
